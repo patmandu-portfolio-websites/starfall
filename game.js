@@ -14,8 +14,8 @@ class InputHandler {
       const key = event.key.toLowerCase();
       if ([" ", "arrowup", "arrowdown", "arrowleft", "arrowright"].includes(key)) event.preventDefault();
       if (!this.keys.has(key)) {
-        if (key === "arrowup") this.game.player.jump();
-        if (key === "arrowdown") this.game.player.pressDown();
+        if (key === "arrowup" && this.game.player.jetpackTimer <= 0) this.game.player.jump();
+        if (key === "arrowdown" && this.game.player.jetpackTimer <= 0) this.game.player.pressDown();
         if (key === "z") this.game.toggleWeapon();
         if (key === "control" || key === "escape" || key === "p") this.game.togglePause();
       }
@@ -25,7 +25,7 @@ class InputHandler {
     window.addEventListener("keyup", (event) => {
       const key = event.key.toLowerCase();
       this.keys.delete(key);
-      if (key === "arrowdown") this.game.player.releaseCrouch();
+      if (key === "arrowdown" && this.game.player.jetpackTimer <= 0) this.game.player.releaseCrouch();
       if (key === " " || key === "j" || key === "x" || key === "enter") this.fireHeld = false;
     });
     window.addEventListener("blur", () => {
@@ -37,8 +37,14 @@ class InputHandler {
       const action = button.dataset.action;
       const press = (event) => {
         event.preventDefault();
-        if (action === "up" || action === "jump") this.game.player.jump();
-        if (action === "down" || action === "drop") this.game.player.pressDown();
+        if (action === "up" || action === "jump") {
+          if (this.game.player.jetpackTimer > 0) this.keys.add("arrowup");
+          else this.game.player.jump();
+        }
+        if (action === "down" || action === "drop") {
+          if (this.game.player.jetpackTimer > 0) this.keys.add("arrowdown");
+          else this.game.player.pressDown();
+        }
         if (action === "left") this.keys.add("arrowleft");
         if (action === "right") this.keys.add("arrowright");
         if (action === "weapon") this.game.toggleWeapon();
@@ -47,7 +53,11 @@ class InputHandler {
       };
       const release = (event) => {
         event.preventDefault();
-        if (action === "down" || action === "drop") this.game.player.releaseCrouch();
+        if (action === "up" || action === "jump") this.keys.delete("arrowup");
+        if (action === "down" || action === "drop") {
+          this.keys.delete("arrowdown");
+          if (this.game.player.jetpackTimer <= 0) this.game.player.releaseCrouch();
+        }
         if (action === "left") this.keys.delete("arrowleft");
         if (action === "right") this.keys.delete("arrowright");
         if (action === "fire") this.fireHeld = false;
@@ -76,6 +86,11 @@ class Player {
     this.health = 3;
     this.maxHealth = 3;
     this.invulnerable = 0;
+    this.shieldTimer = 0;
+    this.dashActive = false;
+    this.dashTargetX = 0;
+    this.dashInvulnerability = 0;
+    this.jetpackTimer = 0;
     this.runTime = 0;
     this.fireCooldown = 0;
     this.autoAimCooldown = 0;
@@ -129,70 +144,121 @@ class Player {
   }
 
   update(dt) {
+    this.shieldTimer = Math.max(0, this.shieldTimer - dt);
+    this.jetpackTimer = Math.max(0, this.jetpackTimer - dt);
+    this.dashInvulnerability = Math.max(0, this.dashInvulnerability - dt);
     const movingRight = this.game.input.keys.has("arrowright");
     const movingLeft = this.game.input.keys.has("arrowleft");
     const horizontalDirection = Number(movingRight) - Number(movingLeft);
-    const horizontalSpeed = horizontalDirection < 0 ? 280 : 340;
-    this.x += horizontalDirection * horizontalSpeed * dt;
+    if (this.dashActive) {
+      const previousX = this.x;
+      this.x = Math.min(this.dashTargetX, this.x + 1020 * dt);
+      this.runTime += dt * 30;
+      this.damageEnemiesDuringDash(previousX, this.x);
+      if (this.x >= this.dashTargetX) {
+        this.dashActive = false;
+        this.dashInvulnerability = 0.12;
+      }
+    } else {
+      const horizontalSpeed = horizontalDirection < 0 ? 280 : 340;
+      this.x += horizontalDirection * horizontalSpeed * dt;
+      this.runTime += dt * (horizontalDirection === 0 ? 12 : 17);
+    }
     this.x = Math.max(8, Math.min(this.game.width - this.width - 8, this.x));
-    this.runTime += dt * (horizontalDirection === 0 ? 12 : 17);
     this.fireCooldown = Math.max(0, this.fireCooldown - dt);
     this.autoAimCooldown = Math.max(0, this.autoAimCooldown - dt);
     this.invulnerable = Math.max(0, this.invulnerable - dt);
     this.jumpBuffer = Math.max(0, this.jumpBuffer - dt);
-    if (this.jumpBuffer > 0 && this.grounded) {
+    if (this.jetpackTimer > 0) {
       this.setCrouching(false);
-      this.velocityY = -740;
-      this.grounded = false;
-      this.jumpBuffer = 0;
-      this.game.audio.play("jump");
-      this.game.addBurst(this.x + 22, this.y + this.height, "#d4ff48", 7, 115);
-    }
-    const previousBottom = this.y + this.height;
-    this.velocityY += 1550 * dt;
-    this.y += this.velocityY * dt;
-    let stompedEnemy = false;
-    if (this.velocityY > 0) {
-      for (const enemy of this.game.enemies) {
-        const overlapsEnemy = this.x + this.width - 8 > enemy.x &&
-          this.x + 8 < enemy.x + enemy.width;
-        if (!enemy.dead && overlapsEnemy && previousBottom <= enemy.y + 8 &&
-            this.y + this.height >= enemy.y) {
-          enemy.damage(enemy.hp);
-          this.y = enemy.y - this.height;
-          this.velocityY = -330;
-          this.grounded = false;
-          this.jumpBuffer = 0;
-          stompedEnemy = true;
-          break;
-        }
-      }
-    }
-    let landingSurface = this.floor;
-    if (!stompedEnemy && this.velocityY >= 0) {
-      for (const platform of this.game.platforms) {
-        if (platform === this.dropThrough) continue;
-        const overlapsPlatform = this.x + this.width - 8 > platform.x &&
-          this.x + 8 < platform.x + platform.width;
-        if (overlapsPlatform && previousBottom <= platform.y + 5 &&
-            this.y + this.height >= platform.y && platform.y < landingSurface) {
-          landingSurface = platform.y;
-        }
-      }
-      if (this.dropThrough &&
-          (this.dropThrough.dead || this.y > this.dropThrough.y + this.dropThrough.height)) {
-        this.dropThrough = null;
-      }
-    }
-    if (this.y + this.height >= landingSurface) {
-      this.y = landingSurface - this.height;
       this.velocityY = 0;
-      this.grounded = true;
+      this.y += (Number(this.game.input.keys.has("arrowdown")) -
+        Number(this.game.input.keys.has("arrowup"))) * 310 * dt;
+      this.y = Math.max(20, Math.min(this.floor - this.height, this.y));
+      this.grounded = this.y + this.height >= this.floor;
+      this.jumpBuffer = 0;
     } else {
-      this.grounded = false;
+      if (this.jumpBuffer > 0 && this.grounded) {
+        this.setCrouching(false);
+        this.velocityY = -740;
+        this.grounded = false;
+        this.jumpBuffer = 0;
+        this.game.audio.play("jump");
+        this.game.addBurst(this.x + 22, this.y + this.height, "#d4ff48", 7, 115);
+      }
+      const previousBottom = this.y + this.height;
+      this.velocityY += 1550 * dt;
+      this.y += this.velocityY * dt;
+      let stompedEnemy = false;
+      if (this.velocityY > 0) {
+        for (const enemy of this.game.enemies) {
+          const overlapsEnemy = this.x + this.width - 8 > enemy.x &&
+            this.x + 8 < enemy.x + enemy.width;
+          if (!enemy.dead && overlapsEnemy && previousBottom <= enemy.y + 8 &&
+              this.y + this.height >= enemy.y) {
+            enemy.damage(enemy.hp);
+            this.y = enemy.y - this.height;
+            this.velocityY = -330;
+            this.grounded = false;
+            this.jumpBuffer = 0;
+            stompedEnemy = true;
+            break;
+          }
+        }
+      }
+      const caveHole = this.dashActive
+        ? null
+        : this.game.getCaveHoleUnder(this.x + this.width / 2);
+      let landingSurface = caveHole ? Infinity : this.floor;
+      if (!stompedEnemy && this.velocityY >= 0) {
+        for (const platform of this.game.platforms) {
+          if (platform === this.dropThrough) continue;
+          const overlapsPlatform = this.x + this.width - 8 > platform.x &&
+            this.x + 8 < platform.x + platform.width;
+          if (overlapsPlatform && previousBottom <= platform.y + 5 &&
+              this.y + this.height >= platform.y && platform.y < landingSurface) {
+            landingSurface = platform.y;
+          }
+        }
+        if (this.dropThrough &&
+            (this.dropThrough.dead || this.y > this.dropThrough.y + this.dropThrough.height)) {
+          this.dropThrough = null;
+        }
+      }
+      if (this.y + this.height >= landingSurface) {
+        this.y = landingSurface - this.height;
+        this.velocityY = 0;
+        this.grounded = true;
+      } else {
+        this.grounded = false;
+      }
+      if (caveHole && this.y + this.height >= this.floor + 12) {
+        this.game.playerFallsIntoCaveHole(this, caveHole);
+      }
     }
     if (this.game.input.fireHeld && this.fireCooldown <= 0) this.shoot();
     if (this.autoAimActive && this.autoAimCooldown <= 0) this.fireAutoAimWeapon();
+  }
+
+  damageEnemiesDuringDash(previousX, currentX) {
+    const sweepRight = currentX + this.width;
+    for (const enemy of this.game.enemies) {
+      if (enemy.dead || enemy.x >= sweepRight || enemy.x + enemy.width <= previousX) continue;
+      if (this.y < enemy.y + enemy.height && this.y + this.height > enemy.y) {
+        enemy.damage(enemy.hp);
+      }
+    }
+  }
+
+  startDash() {
+    this.setCrouching(false);
+    this.dashTargetX = Math.max(8, this.game.width - this.width - 100);
+    this.dashActive = this.x < this.dashTargetX;
+    this.dashInvulnerability = this.dashActive ? 0 : 0.12;
+    this.game.showPickupMessage("ALIEN BREAKER DASH · 3X SPEED · INVULNERABLE");
+    if (!this.dashActive) {
+      this.game.addBurst(this.x + this.width / 2, this.y + this.height / 2, "#ffb14a", 18, 180);
+    }
   }
 
   shoot() {
@@ -260,7 +326,8 @@ class Player {
   }
 
   hit() {
-    if (this.invulnerable > 0 || this.game.state !== "running") return;
+    if (this.invulnerable > 0 || this.shieldTimer > 0 || this.dashActive ||
+        this.dashInvulnerability > 0 || this.game.state !== "running") return;
     this.invulnerable = 1.55;
     this.game.audio.play("hit");
     if (this.autoAimActive) {
@@ -328,6 +395,34 @@ class Player {
       ctx.fillRect(droneX - 1, droneY - 1, 2, 2);
       ctx.restore();
     }
+    if (this.jetpackTimer > 0) {
+      ctx.save();
+      ctx.shadowColor = "#73eaff";
+      ctx.shadowBlur = 13;
+      ctx.fillStyle = "#73eaff";
+      const flameX = this.x + 8;
+      const flameY = this.y + this.height - 2;
+      ctx.beginPath();
+      ctx.moveTo(flameX, flameY);
+      ctx.lineTo(flameX + 9, flameY + 15 + Math.random() * 7);
+      ctx.lineTo(flameX + 17, flameY);
+      ctx.closePath();
+      ctx.fill();
+      ctx.restore();
+    }
+    if (this.shieldTimer > 0) {
+      ctx.save();
+      ctx.globalAlpha = 0.45 + Math.sin(this.game.elapsed * 10) * 0.12;
+      ctx.strokeStyle = "#73eaff";
+      ctx.lineWidth = 2;
+      ctx.shadowColor = "#73eaff";
+      ctx.shadowBlur = 13;
+      ctx.beginPath();
+      ctx.ellipse(cx, this.y + this.height / 2, this.width * .82, this.height * .76,
+        0, 0, Math.PI * 2);
+      ctx.stroke();
+      ctx.restore();
+    }
   }
 }
 
@@ -359,6 +454,17 @@ class Projectile {
       if (this.grenade) this.explode();
       else this.dead = true;
       return;
+    }
+    for (const hazard of this.game.caveHazards) {
+      if (hazard.type !== "falling-spike" || hazard.dead) continue;
+      if (this.x + this.radius > hazard.x && this.x - this.radius < hazard.x + hazard.width &&
+          this.y + this.radius > hazard.y && this.y - this.radius < hazard.y + hazard.height) {
+        hazard.dead = true;
+        this.dead = true;
+        this.game.addBurst(hazard.x + hazard.width / 2, hazard.y + hazard.height / 2, "#d8c7a6", 12, 160);
+        if (this.grenade) this.game.detonate(this.x, this.y);
+        return;
+      }
     }
     for (const enemy of this.game.enemies) {
       if (enemy.dead) continue;
@@ -459,7 +565,9 @@ class Pickup {
     this.dead = true;
     if (this.type === "health" || this.type === "double-health") {
       const restored = this.type === "double-health" ? 2 : 1;
-      this.game.player.health = Math.min(this.game.player.maxHealth, this.game.player.health + restored);
+      const player = this.game.player;
+      player.maxHealth = Math.min(10, player.maxHealth + restored);
+      player.health = Math.min(player.maxHealth, player.health + restored);
       this.game.updateHealth();
       this.game.showPickupMessage(
         this.game.player.health === this.game.player.maxHealth
@@ -472,6 +580,20 @@ class Pickup {
       this.game.player.autoAimCooldown = 0;
       this.game.showPickupMessage("AUTO-AIM DRONE ONLINE · RAPID FIRE · NEXT HIT ABSORBED");
       this.game.addBurst(this.x + this.size / 2, this.y + this.size / 2, "#b58cff", 18, 155);
+    } else if (this.type === "shield") {
+      this.game.player.shieldTimer = 10;
+      this.game.showPickupMessage("SHIELD BUBBLE ACTIVE · 10 SECONDS INVULNERABLE");
+      this.game.addBurst(this.x + this.size / 2, this.y + this.size / 2, "#73eaff", 18, 155);
+    } else if (this.type === "dash") {
+      this.game.player.startDash();
+      this.game.addBurst(this.x + this.size / 2, this.y + this.size / 2, "#ffb14a", 18, 155);
+    } else if (this.type === "jetpack") {
+      const player = this.game.player;
+      player.jetpackTimer = 30;
+      player.setCrouching(false);
+      player.velocityY = 0;
+      this.game.showPickupMessage("JETPACK ONLINE · ARROW KEYS · 30 SECONDS");
+      this.game.addBurst(this.x + this.size / 2, this.y + this.size / 2, "#58dfff", 18, 155);
     } else {
       this.game.unlockedWeapons.add(this.type);
       this.game.weaponAmmo[this.type] += 100;
@@ -497,7 +619,9 @@ class Pickup {
     const color = this.type === "health" || this.type === "double-health" ? "#78f6ff" :
       this.type === "spread" ? "#d4ff48" :
       this.type === "grenade" ? "#ff834f" :
-      this.type === "rapid-spread" || this.type === "auto-aim" ? "#b58cff" : "#ffbd62";
+      this.type === "rapid-spread" || this.type === "auto-aim" ? "#b58cff" :
+      this.type === "shield" || this.type === "jetpack" ? "#73eaff" :
+      this.type === "dash" ? "#ffb14a" : "#ffbd62";
     ctx.save();
     ctx.translate(centerX, centerY);
     ctx.rotate(this.game.elapsed * .8);
@@ -522,6 +646,21 @@ class Pickup {
       ctx.beginPath();
       ctx.arc(0, 0, 2, 0, Math.PI * 2);
       ctx.fill();
+    } else if (this.type === "shield") {
+      ctx.beginPath();
+      ctx.arc(0, 0, 7, -.8, Math.PI + .8);
+      ctx.stroke();
+      ctx.fillRect(-5, 1, 10, 2);
+    } else if (this.type === "dash") {
+      ctx.beginPath();
+      ctx.moveTo(-7, -5); ctx.lineTo(1, -5); ctx.lineTo(-2, -1);
+      ctx.lineTo(7, -1); ctx.lineTo(-2, 7); ctx.lineTo(0, 2); ctx.lineTo(-7, 2);
+      ctx.closePath(); ctx.fill();
+    } else if (this.type === "jetpack") {
+      ctx.fillRect(-5, -6, 10, 12);
+      ctx.fillRect(-7, -4, 2, 8);
+      ctx.fillRect(5, -4, 2, 8);
+      ctx.fillRect(-2, 6, 4, 3);
     } else if (this.type === "spread" || this.type === "rapid-spread") {
       for (const angle of [0, -Math.PI / 8, -Math.PI / 4]) {
         ctx.save(); ctx.rotate(angle);
@@ -531,6 +670,99 @@ class Pickup {
     } else {
       ctx.beginPath(); ctx.arc(0, 0, 5, 0, Math.PI * 2); ctx.fill();
       ctx.fillRect(-1, -8, 2, 5);
+    }
+    ctx.restore();
+  }
+}
+
+class CaveHazard {
+  constructor(game, type, x) {
+    this.game = game;
+    this.type = type;
+    this.x = x;
+    this.dead = false;
+    this.spent = false;
+    this.triggered = false;
+    this.landed = false;
+    this.phase = Math.random() * Math.PI * 2;
+    if (type === "hole") {
+      this.width = 76 + Math.random() * 42;
+      this.height = 0;
+      this.y = game.player.floor;
+    } else if (type === "ground-spikes") {
+      this.width = 35 + Math.random() * 19;
+      this.height = 19;
+      this.y = game.player.floor - this.height;
+    } else {
+      this.width = 23 + Math.random() * 12;
+      this.height = 38 + Math.random() * 16;
+      this.y = -this.height;
+      this.velocityY = 0;
+      this.fallDelay = 0.35 + Math.random() * 0.9;
+    }
+  }
+
+  update(dt) {
+    this.x -= this.game.speed * 0.76 * dt;
+    if (this.type === "hole") this.y = this.game.player.floor;
+    if (this.type === "ground-spikes") this.y = this.game.player.floor - this.height;
+    if (this.type === "falling-spike" && !this.landed) {
+      this.fallDelay -= dt;
+      if (this.fallDelay <= 0) {
+        this.velocityY += 1050 * dt;
+        this.y += this.velocityY * dt;
+        if (this.y + this.height >= this.game.player.floor) {
+          this.y = this.game.player.floor - this.height;
+          this.velocityY = 0;
+          this.landed = true;
+        }
+      }
+    }
+    if (this.x + this.width < -20) this.dead = true;
+  }
+
+  checkPlayerCollision(player) {
+    if (this.dead || this.spent || this.type === "hole") return;
+    const overlapsX = player.x + player.width - 7 > this.x &&
+      player.x + 7 < this.x + this.width;
+    const overlapsY = player.y + player.height > this.y + 4 &&
+      player.y + 8 < this.y + this.height;
+    if (overlapsX && overlapsY) {
+      this.spent = true;
+      player.hit();
+      this.game.addBurst(this.x + this.width / 2, this.y + this.height / 2, "#b8a78b", 9, 130);
+    }
+  }
+
+  draw(ctx) {
+    ctx.save();
+    if (this.type === "hole") {
+      ctx.fillStyle = "#080b12";
+      ctx.fillRect(this.x, this.y - 3, this.width, this.game.height - this.y + 3);
+      ctx.fillStyle = "#859568";
+      ctx.fillRect(this.x - 3, this.y - 5, this.width + 6, 4);
+      ctx.fillStyle = "#262d2b";
+      ctx.fillRect(this.x + 6, this.y + 8, Math.max(0, this.width - 12), 4);
+    } else {
+      ctx.shadowColor = this.spent ? "#00000000" : "#d5b98d";
+      ctx.shadowBlur = this.spent ? 0 : 8;
+      ctx.fillStyle = this.spent ? "#625b50" : "#b4a58b";
+      ctx.beginPath();
+      if (this.type === "falling-spike") {
+        ctx.moveTo(this.x, this.y);
+        ctx.lineTo(this.x + this.width / 2, this.y + this.height);
+        ctx.lineTo(this.x + this.width, this.y);
+      } else {
+        ctx.moveTo(this.x, this.y + this.height);
+        ctx.lineTo(this.x + this.width * .18, this.y + 5);
+        ctx.lineTo(this.x + this.width * .36, this.y + this.height);
+        ctx.lineTo(this.x + this.width * .56, this.y + 2);
+        ctx.lineTo(this.x + this.width * .76, this.y + this.height);
+        ctx.lineTo(this.x + this.width, this.y + 7);
+        ctx.lineTo(this.x + this.width, this.y + this.height);
+      }
+      ctx.closePath();
+      ctx.fill();
     }
     ctx.restore();
   }
@@ -596,12 +828,13 @@ class Platform {
 
   draw(ctx) {
     const braceHeight = Math.max(10, this.game.height * 0.78 - this.y - this.height);
-    ctx.fillStyle = "#161c29";
+    const alienBiome = this.game.distance >= 1000;
+    ctx.fillStyle = alienBiome ? "#18252b" : "#161c29";
     ctx.fillRect(this.x + 13, this.y + this.height, 9, braceHeight);
     ctx.fillRect(this.x + this.width - 23, this.y + this.height, 9, braceHeight);
-    ctx.fillStyle = "#313b4e";
+    ctx.fillStyle = alienBiome ? "#344b4c" : "#313b4e";
     ctx.fillRect(this.x, this.y + 5, this.width, this.height - 5);
-    ctx.fillStyle = "#818da0";
+    ctx.fillStyle = alienBiome ? "#9bc477" : "#818da0";
     ctx.fillRect(this.x, this.y + 2, this.width, 5);
     ctx.fillStyle = this.trimColor;
     ctx.fillRect(this.x + 10, this.y, Math.min(38, this.width - 20), 2);
@@ -628,7 +861,7 @@ class Enemy {
     this.speed = game.speed * (type === "charger" ? 1.08 : 0.82);
     this.dead = false;
     this.fireTimer = 1.2 + Math.random() * 1.1;
-    this.weapon = type === "sentry" ? "aimed-bolt" : null;
+    this.weapon = null;
     this.spreadWeaponDecidedTier = 0;
     this.unlockWeapon();
     if (type === "charger") {
@@ -643,10 +876,17 @@ class Enemy {
   }
 
   unlockWeapon() {
+    if (this.type === "sentry") {
+      if (this.weapon !== "aimed-bolt" && this.game.canEnemyUseTrackingWeapon(this)) {
+        this.weapon = "aimed-bolt";
+      }
+      return;
+    }
     if (this.type === "charger") {
       const tier = this.game.enemySpreadLimit;
       if (!this.game.enemyWeaponUnlocks.has("scatter") ||
           tier <= this.spreadWeaponDecidedTier || this.weapon === "scatter") return;
+      if (!this.game.canEnemyUseTrackingWeapon(this)) return;
       this.spreadWeaponDecidedTier = tier;
       if (this.game.enemies.filter((enemy) =>
         !enemy.dead && enemy.type === "charger" && enemy.weapon === "scatter"
@@ -660,6 +900,7 @@ class Enemy {
     const weaponByType = { drifter: "arc-mine" };
     const weapon = weaponByType[this.type];
     if (!weapon || !this.game.enemyWeaponUnlocks.has(weapon) || this.weapon === weapon) return;
+    if (!this.game.canEnemyUseTrackingWeapon(this)) return;
     this.weapon = weapon;
     this.fireTimer = Math.min(this.fireTimer, 0.9);
   }
@@ -689,6 +930,11 @@ class Enemy {
     if (this.fireTimer <= 0 && this.x < this.game.width - 25 &&
         this.x > this.game.player.x + 105) this.fireWeapon();
     if (this.x < -this.width - 20) this.dead = true;
+    if (!this.platform && this.game.isCaveHoleOverlapping(this.x + this.width / 2) &&
+        this.y + this.height >= this.game.player.floor - 6) {
+      this.game.enemyFallsIntoCaveHole(this);
+      return;
+    }
     const player = this.game.player;
     if (this.x < player.x + player.width - 7 && this.x + this.width > player.x + 8 &&
         this.y < player.y + player.height - 5 && this.y + this.height > player.y + 10) player.hit();
@@ -744,7 +990,9 @@ class Enemy {
   draw(ctx) {
     const x = this.x, y = this.y;
     ctx.save();
-    if (this.type === "charger") {
+    if (this.game.distance >= 1000) {
+      this.drawAlienEnemy(ctx, x, y);
+    } else if (this.type === "charger") {
       ctx.shadowColor = "#ff765e"; ctx.shadowBlur = 9;
       ctx.fillStyle = "#b84948";
       ctx.beginPath();
@@ -796,6 +1044,60 @@ class Enemy {
       ctx.fillStyle = "#d4ff48"; ctx.fillRect(x + 8, y - 9, (this.width - 16) * this.hp / (this.type === "charger" ? 2 : 3), 3);
     }
     ctx.restore();
+  }
+
+  drawAlienEnemy(ctx, x, y) {
+    if (this.type === "sentry") {
+      ctx.shadowColor = "#65dcff";
+      ctx.shadowBlur = 12;
+      ctx.fillStyle = "#556d70";
+      ctx.fillRect(x + 6, y + 13, 31, 43);
+      ctx.fillStyle = "#a9c6b4";
+      ctx.fillRect(x + 1, y + 30, 42, 8);
+      ctx.fillStyle = "#263e48";
+      ctx.fillRect(x + 10, y + 4, 24, 19);
+      ctx.fillStyle = "#65dcff";
+      ctx.beginPath();
+      ctx.arc(x + 22, y + 13, 5, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.shadowBlur = 0;
+      ctx.fillStyle = "#c5ed8a";
+      ctx.fillRect(x + 14, y + 53, 5, 7);
+      ctx.fillRect(x + 27, y + 53, 5, 7);
+      return;
+    }
+
+    ctx.translate(x + this.width / 2, y + this.height / 2);
+    ctx.rotate(this.type === "drifter" ? Math.sin(this.game.elapsed * 2.3 + this.phase) * .08 : 0);
+    ctx.translate(-this.width / 2, -this.height / 2);
+    ctx.shadowColor = this.type === "charger" ? "#a2e35f" : "#56dce0";
+    ctx.shadowBlur = 12;
+    ctx.fillStyle = this.type === "charger" ? "#678d45" : "#4f7779";
+    ctx.beginPath();
+    ctx.moveTo(5, 29);
+    ctx.lineTo(13, 12);
+    ctx.lineTo(21, 16);
+    ctx.lineTo(27, 5);
+    ctx.lineTo(34, 16);
+    ctx.lineTo(44, 12);
+    ctx.lineTo(51, 28);
+    ctx.lineTo(42, 43);
+    ctx.lineTo(13, 43);
+    ctx.closePath();
+    ctx.fill();
+    ctx.shadowBlur = 0;
+    ctx.fillStyle = "#d8f1a0";
+    ctx.beginPath();
+    ctx.ellipse(29, 23, 10, 7, 0, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = "#17282a";
+    ctx.beginPath();
+    ctx.arc(25, 23, 2, 0, Math.PI * 2);
+    ctx.arc(33, 23, 2, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = "#77e8db";
+    ctx.fillRect(13, 34, 6, 5);
+    ctx.fillRect(39, 34, 6, 5);
   }
 }
 
@@ -940,13 +1242,20 @@ class Game {
     this.enemyProjectiles = [];
     this.particles = [];
     this.pickups = [];
+    this.caveHazards = [];
+    this.caveHazardTimer = 1.2;
     this.explosions = [];
     this.platformTimer = 0;
     this.nextWeaponDrop = 100;
     this.nextAutoAimDrop = 700;
     this.nextDoubleHealthDrop = 600;
     this.nextHealthDrop = 200;
+    this.nextShieldDrop = 600;
+    this.nextJetpackDrop = 2000;
+    this.nextDashDrop = 3000;
     this.healthUpgradeApplied = false;
+    this.alienWorldAnnounced = false;
+    this.caveWorldAnnounced = false;
     this.pickupMessageTimer = 0;
     this.enemyWeaponUnlocks = new Set();
     this.nextEnemyWeaponUnlock = 500;
@@ -1017,12 +1326,19 @@ class Game {
     this.enemyProjectiles = [];
     this.particles = [];
     this.pickups = [];
+    this.caveHazards = [];
+    this.caveHazardTimer = 1.2;
     this.explosions = [];
     this.nextWeaponDrop = 100;
     this.nextAutoAimDrop = 700;
     this.nextDoubleHealthDrop = 600;
     this.nextHealthDrop = 200;
+    this.nextShieldDrop = 600;
+    this.nextJetpackDrop = 2000;
+    this.nextDashDrop = 3000;
     this.healthUpgradeApplied = false;
+    this.alienWorldAnnounced = false;
+    this.caveWorldAnnounced = false;
     this.pickupMessageTimer = 0;
     this.enemyWeaponUnlocks.clear();
     this.nextEnemyWeaponUnlock = 500;
@@ -1035,6 +1351,10 @@ class Game {
     this.player.velocityY = 0;
     this.player.grounded = true;
     this.player.invulnerable = 0;
+    this.player.shieldTimer = 0;
+    this.player.dashActive = false;
+    this.player.dashInvulnerability = 0;
+    this.player.jetpackTimer = 0;
     this.player.fireCooldown = 0;
     this.player.autoAimCooldown = 0;
     this.player.autoAimActive = false;
@@ -1157,6 +1477,47 @@ class Game {
     }
   }
 
+  getCaveHoleUnder(x) {
+    if (this.distance < 3000) return null;
+    return this.caveHazards.find((hazard) =>
+      !hazard.dead && hazard.type === "hole" && x >= hazard.x && x <= hazard.x + hazard.width
+    ) || null;
+  }
+
+  isCaveHoleOverlapping(x) {
+    return Boolean(this.getCaveHoleUnder(x));
+  }
+
+  playerFallsIntoCaveHole(player, hole) {
+    if (hole.triggered) return;
+    hole.triggered = true;
+    player.hit();
+    player.x = Math.max(8, Math.min(this.width - player.width - 8, hole.x + hole.width + 10));
+    player.y = player.floor - player.height;
+    player.velocityY = 0;
+    player.grounded = true;
+    this.addBurst(player.x + player.width / 2, player.floor - 5, "#9ba087", 10, 135);
+  }
+
+  enemyFallsIntoCaveHole(enemy) {
+    if (enemy.dead) return;
+    enemy.dead = true;
+    this.score += enemy.score;
+    this.addBurst(enemy.x + enemy.width / 2, enemy.y + enemy.height / 2, "#9ba087", 12, 145);
+  }
+
+  spawnCaveHazard() {
+    const roll = Math.random();
+    const holeAlreadyActive = this.caveHazards.some((hazard) =>
+      !hazard.dead && hazard.type === "hole"
+    );
+    const type = roll < .34 && !holeAlreadyActive
+      ? "hole"
+      : roll < .67 ? "ground-spikes" : "falling-spike";
+    this.caveHazards.push(new CaveHazard(this, type, this.width + 24));
+    this.caveHazardTimer = 1.15 + Math.random() * 1.25;
+  }
+
   updateHealth() {
     const container = document.getElementById("health-pips");
     while (container.children.length < this.player.maxHealth) container.appendChild(document.createElement("i"));
@@ -1195,7 +1556,15 @@ class Game {
     this.score += dt * 5;
     this.processMilestones();
     this.processEnemyWeaponUnlocks();
+    if (this.distance >= 3000) {
+      this.caveHazardTimer -= dt;
+      if (this.caveHazardTimer <= 0) this.spawnCaveHazard();
+    }
+    for (const hazard of this.caveHazards) hazard.update(dt);
     this.player.update(dt);
+    if (this.distance >= 3000) {
+      for (const hazard of this.caveHazards) hazard.checkPlayerCollision(this.player);
+    }
     for (const platform of this.platforms) platform.update(dt);
     for (const pickup of this.pickups) pickup.update(dt);
     this.spawnTimer -= dt;
@@ -1221,6 +1590,7 @@ class Game {
     this.projectiles = this.projectiles.filter((projectile) => !projectile.dead);
     this.enemyProjectiles = this.enemyProjectiles.filter((projectile) => !projectile.dead);
     this.pickups = this.pickups.filter((pickup) => !pickup.dead);
+    this.caveHazards = this.caveHazards.filter((hazard) => !hazard.dead);
     this.explosions = this.explosions.filter((explosion) => explosion.life > 0);
     this.particles = this.particles.filter((particle) => particle.life > 0);
     this.shake = Math.max(0, this.shake - 28 * dt);
@@ -1230,6 +1600,14 @@ class Game {
   }
 
   processMilestones() {
+    if (!this.caveWorldAnnounced && this.distance >= 3000) {
+      this.caveWorldAnnounced = true;
+      this.showPickupMessage("3000M · ALIEN CAVE · WATCH FOR FALLING STALACTITES");
+    }
+    if (!this.alienWorldAnnounced && this.distance >= 1000) {
+      this.alienWorldAnnounced = true;
+      this.showPickupMessage("1000M · ALIEN WILDS · HOSTILE LIFE FORMS DETECTED");
+    }
     if (!this.healthUpgradeApplied && this.distance >= 500) {
       this.healthUpgradeApplied = true;
       this.player.maxHealth = 5;
@@ -1262,6 +1640,21 @@ class Game {
       this.pickups.push(new Pickup(this, "health", this.randomPickupX(17), milestone));
       this.nextHealthDrop += milestone < 200 ? 200 : 100;
     }
+    while (this.distance >= this.nextShieldDrop) {
+      const milestone = this.nextShieldDrop;
+      this.pickups.push(new Pickup(this, "shield", this.randomPickupX(19), milestone));
+      this.nextShieldDrop += 300;
+    }
+    while (this.distance >= this.nextJetpackDrop) {
+      const milestone = this.nextJetpackDrop;
+      this.pickups.push(new Pickup(this, "jetpack", this.randomPickupX(19), milestone));
+      this.nextJetpackDrop += 800;
+    }
+    while (this.distance >= this.nextDashDrop) {
+      const milestone = this.nextDashDrop;
+      this.pickups.push(new Pickup(this, "dash", this.randomPickupX(19), milestone));
+      this.nextDashDrop += 800;
+    }
   }
 
   randomPickupX(size) {
@@ -1284,11 +1677,29 @@ class Game {
   }
 
   get enemyScreenLimit() {
-    return this.distance <= 150 ? 1 : Math.ceil(this.distance / 150);
+    if (this.distance < 1000) {
+      return this.distance <= 150 ? 1 : Math.ceil(this.distance / 150);
+    }
+    if (this.distance >= 2000) {
+      return 5 + Math.floor((this.distance - 2000) / 1000);
+    }
+    const alienStartLimit = Math.floor(Math.ceil(1000 / 150) / 2);
+    return alienStartLimit + Math.floor((this.distance - 1000) / 150);
   }
 
   canSpawnEnemy() {
     return this.enemies.filter((enemy) => !enemy.dead).length < this.enemyScreenLimit;
+  }
+
+  isEnemyTrackingWeapon(weapon) {
+    return weapon === "aimed-bolt" || weapon === "scatter" || weapon === "arc-mine";
+  }
+
+  canEnemyUseTrackingWeapon(excludedEnemy = null) {
+    const trackingEnemies = this.enemies.filter((enemy) =>
+      !enemy.dead && enemy !== excludedEnemy && this.isEnemyTrackingWeapon(enemy.weapon)
+    ).length;
+    return trackingEnemies < 1;
   }
 
   get enemySpreadLimit() {
@@ -1324,8 +1735,18 @@ class Game {
     const pickupChance = this.distance <= 200
       ? 0.72
       : Math.max(0.12, 0.45 - (this.distance - 200) * 0.0007);
-    const pickupTypes = this.distance >= 600
-      ? ["health", "double-health", "spread", "rapid-spread", "grenade", "auto-aim", "auto-aim"]
+    const pickupTypes = this.distance >= 3000
+      ? ["health", "double-health", "spread", "rapid-spread", "grenade", "auto-aim",
+        "shield", "shield", "shield", "dash", "jetpack"]
+      : this.distance >= 2000
+      ? ["health", "double-health", "spread", "rapid-spread", "grenade", "auto-aim",
+        "shield", "shield", "shield", "jetpack"]
+      : this.distance >= 1000
+      ? ["health", "double-health", "spread", "rapid-spread", "grenade", "auto-aim",
+        "shield", "shield", "shield"]
+      : this.distance >= 600
+      ? ["health", "double-health", "spread", "rapid-spread", "grenade", "auto-aim",
+        "auto-aim", "shield", "shield"]
       : this.distance >= 500
         ? ["health", "double-health", "spread", "rapid-spread", "grenade"]
       : ["health", "spread", "grenade"];
@@ -1376,33 +1797,63 @@ class Game {
   drawBackground(dt) {
     const ctx = this.ctx, w = this.width, h = this.height, floor = h * .78;
     const gradient = ctx.createLinearGradient(0, 0, 0, h);
-    gradient.addColorStop(0, "#131928"); gradient.addColorStop(.55, "#20283a"); gradient.addColorStop(1, "#111723");
-    ctx.fillStyle = gradient; ctx.fillRect(0, 0, w, h);
-    const nebula = ctx.createRadialGradient(w * .73, h * .33, 2, w * .73, h * .33, w * .58);
-    nebula.addColorStop(0, "#30293c55"); nebula.addColorStop(1, "#30293c00");
-    ctx.fillStyle = nebula; ctx.fillRect(0, 0, w, floor);
-    for (const star of this.stars) {
-      star.x -= (this.state === "running" ? this.speed : 14) * star.depth * dt * .18;
-      if (star.x < 0) { star.x = w; star.y = Math.random() * floor; }
-      ctx.globalAlpha = .28 + star.depth * .72;
-      ctx.fillStyle = star.depth > .52 ? "#d5edff" : "#8498b5";
-      ctx.fillRect(star.x, star.y, star.size, star.size);
+    const alienBiome = this.distance >= 1000;
+    const caveBiome = this.distance >= 3000;
+    if (caveBiome) {
+      gradient.addColorStop(0, "#080b13");
+      gradient.addColorStop(.55, "#161923");
+      gradient.addColorStop(1, "#0c1017");
+    } else if (alienBiome) {
+      gradient.addColorStop(0, "#0b1726");
+      gradient.addColorStop(.48, "#1a3038");
+      gradient.addColorStop(1, "#101c24");
+    } else {
+      gradient.addColorStop(0, "#131928");
+      gradient.addColorStop(.55, "#20283a");
+      gradient.addColorStop(1, "#111723");
     }
-    ctx.globalAlpha = 1;
-    for (const mote of this.dust) {
-      mote.x -= (this.state === "running" ? this.speed : 14) * mote.depth * dt * .3;
-      if (mote.x < -5) { mote.x = w + 5; mote.y = Math.random() * floor; }
-      ctx.globalAlpha = .12 + mote.depth * .2;
-      ctx.fillStyle = "#e3e1d0";
-      ctx.beginPath(); ctx.arc(mote.x, mote.y, mote.size, 0, Math.PI * 2); ctx.fill();
+    ctx.fillStyle = gradient; ctx.fillRect(0, 0, w, h);
+    if (!caveBiome) {
+      const nebula = ctx.createRadialGradient(w * .73, h * .33, 2, w * .73, h * .33, w * .58);
+      nebula.addColorStop(0, alienBiome ? "#80ad5740" : "#30293c55");
+      nebula.addColorStop(1, alienBiome ? "#80ad5700" : "#30293c00");
+      ctx.fillStyle = nebula; ctx.fillRect(0, 0, w, floor);
+    }
+    if (!caveBiome) {
+      for (const star of this.stars) {
+        star.x -= (this.state === "running" ? this.speed : 14) * star.depth * dt * .18;
+        if (star.x < 0) { star.x = w; star.y = Math.random() * floor; }
+        ctx.globalAlpha = .28 + star.depth * .72;
+        ctx.fillStyle = alienBiome
+          ? star.depth > .52 ? "#e3f4b0" : "#a7c5a0"
+          : star.depth > .52 ? "#d5edff" : "#8498b5";
+        ctx.fillRect(star.x, star.y, star.size, star.size);
+      }
+      ctx.globalAlpha = 1;
+      for (const mote of this.dust) {
+        mote.x -= (this.state === "running" ? this.speed : 14) * mote.depth * dt * .3;
+        if (mote.x < -5) { mote.x = w + 5; mote.y = Math.random() * floor; }
+        ctx.globalAlpha = .12 + mote.depth * .2;
+        ctx.fillStyle = "#e3e1d0";
+        ctx.beginPath(); ctx.arc(mote.x, mote.y, mote.size, 0, Math.PI * 2); ctx.fill();
+      }
     }
     ctx.globalAlpha = 1;
     this.drawShipInterior(floor);
+    for (const hazard of this.caveHazards) hazard.draw(ctx);
     for (const platform of this.platforms) platform.draw(ctx);
   }
 
   drawShipInterior(floor) {
     const ctx = this.ctx, w = this.width, h = this.height;
+    if (this.distance >= 3000) {
+      this.drawAlienCave(floor);
+      return;
+    }
+    if (this.distance >= 1000) {
+      this.drawAlienLandscape(floor);
+      return;
+    }
     ctx.fillStyle = "#151a24";
     ctx.fillRect(0, floor - 11, w, 16);
     ctx.fillStyle = "#3c4555";
@@ -1441,6 +1892,86 @@ class Game {
     ctx.fillRect(w * .27, floor - 3, 35, 2);
     ctx.fillRect(w * .69, floor - 3, 22, 2);
     ctx.globalAlpha = 1;
+  }
+
+  drawAlienLandscape(floor) {
+    const ctx = this.ctx, w = this.width, h = this.height;
+    const scroll = this.elapsed * this.speed;
+    const moonX = w * .74 - (scroll * .025) % (w + 100);
+    ctx.fillStyle = "#d3e69a";
+    ctx.globalAlpha = .72;
+    ctx.beginPath();
+    ctx.arc(moonX, h * .22, Math.min(w, h) * .075, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.globalAlpha = 1;
+
+    for (let layer = 0; layer < 3; layer++) {
+      const baseY = floor - 38 - layer * 31;
+      const tileWidth = 170 + layer * 70;
+      const offset = (scroll * (0.08 + layer * 0.06)) % tileWidth;
+      ctx.fillStyle = ["#263f43", "#1b3339", "#12262e"][layer];
+      ctx.beginPath();
+      ctx.moveTo(-tileWidth - offset, floor);
+      for (let x = -tileWidth - offset; x <= w + tileWidth; x += tileWidth / 2) {
+        const step = Math.round((x + offset) / (tileWidth / 2));
+        const peak = baseY - ((step * 37 + layer * 19) % 47);
+        ctx.lineTo(x, peak);
+        ctx.lineTo(x + tileWidth / 4, baseY + 12);
+      }
+      ctx.lineTo(w + tileWidth, floor);
+      ctx.closePath();
+      ctx.fill();
+    }
+
+    ctx.fillStyle = "#182b2b";
+    ctx.fillRect(0, floor - 8, w, h - floor + 8);
+    ctx.fillStyle = "#738f4d";
+    ctx.fillRect(0, floor - 8, w, 3);
+    const groundOffset = (scroll * .7) % 90;
+    for (let x = -groundOffset; x < w + 45; x += 90) {
+      ctx.fillStyle = "#40573c";
+      ctx.fillRect(x + 14, floor - 19, 3, 11);
+      ctx.fillRect(x + 8, floor - 18, 14, 2);
+      ctx.fillStyle = "#a2c96b";
+      ctx.fillRect(x + 9, floor - 21, 5, 3);
+      ctx.fillRect(x + 18, floor - 23, 5, 4);
+    }
+  }
+
+  drawAlienCave(floor) {
+    const ctx = this.ctx, w = this.width, h = this.height;
+    const scroll = (this.elapsed * this.speed * .2) % 110;
+    ctx.fillStyle = "#171923";
+    ctx.beginPath();
+    ctx.moveTo(0, 0);
+    ctx.lineTo(w, 0);
+    for (let x = w; x >= 0; x -= 30) {
+      const depth = 18 + Math.sin((x + scroll) * .027) * 13 + Math.sin((x - scroll) * .061) * 7;
+      ctx.lineTo(x, depth);
+    }
+    ctx.closePath();
+    ctx.fill();
+    ctx.fillStyle = "#20232a";
+    ctx.fillRect(0, floor - 10, w, h - floor + 10);
+    ctx.fillStyle = "#626957";
+    ctx.fillRect(0, floor - 12, w, 4);
+    ctx.fillStyle = "#394039";
+    ctx.fillRect(0, floor - 8, w, 7);
+    for (let x = -scroll; x < w + 70; x += 70) {
+      const ridge = 2 + Math.sin((x + scroll) * .1) * 2;
+      ctx.fillStyle = "#343a35";
+      ctx.fillRect(x, floor + ridge, 26, 3);
+      ctx.fillStyle = "#485044";
+      ctx.fillRect(x + 35, floor + 8, 17, 2);
+    }
+    ctx.fillStyle = "#272a31";
+    ctx.fillRect(0, floor + 35, w, h - floor - 35);
+    ctx.fillStyle = "#414740";
+    for (let x = 20; x < w; x += 113) {
+      const glowY = 45 + ((x * 17) % Math.max(60, Math.floor(floor - 95)));
+      ctx.fillRect(x, glowY, 2, 10);
+      ctx.fillRect(x - 3, glowY + 9, 8, 2);
+    }
   }
 
   draw(dt) {

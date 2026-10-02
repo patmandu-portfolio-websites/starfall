@@ -1,0 +1,72 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+  <meta name="theme-color" content="#080c18">
+  <title>STARFALL // Escape the ship</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <main class="game-shell">
+    <header class="topbar">
+      <a class="wordmark" href="#" aria-label="Starfall home"><span class="wordmark-icon">✳</span> STARFALL<span class="wordmark-divider">//</span><span class="wordmark-subtitle">SHIPBREAK RUN</span></a>
+      <div class="status-pill"><span class="status-dot"></span> VESSEL STATUS: CRITICAL</div>
+      <button class="sound-toggle" id="sound-toggle" type="button" aria-label="Toggle sound" title="Toggle sound">♪ <span>SOUND</span></button>
+    </header>
+
+    <section class="game-frame" aria-label="Starfall endless runner game">
+      <canvas id="game-canvas" aria-label="Side-scrolling spaceship game"></canvas>
+
+      <div class="hud" id="hud" aria-live="polite">
+        <div class="hud-left">
+          <div class="eyebrow">DISTANCE</div>
+          <div class="distance-value"><span id="distance">00000</span><small> M</small></div>
+          <div class="best-line">PERSONAL BEST <span id="best">00000</span> M</div>
+        </div>
+        <div class="hud-right">
+          <div class="eyebrow">HULL INTEGRITY</div>
+          <div class="health-pips" id="health-pips" aria-label="Three of three hull points remaining"><i></i><i></i><i></i></div>
+          <div class="weapon-readout"><span class="weapon-spark">✳</span><span id="weapon-name">SINGLE SHOT</span><span id="weapon-ammo"></span><kbd id="weapon-key">Z</kbd></div>
+        </div>
+        <button class="pause-button" id="pause-button" type="button" aria-label="Pause game">Ⅱ</button>
+        <button class="reset-button" id="reset-button" type="button" aria-label="Reset game">↻</button>
+      </div>
+      <div class="pickup-toast" id="pickup-toast" role="status" aria-live="polite"></div>
+
+      <div class="overlay" id="overlay">
+        <div class="overlay-card">
+          <div class="overlay-tag"><span class="status-dot"></span> EMERGENCY PROTOCOL ACTIVE</div>
+          <p class="kicker" id="overlay-kicker">THE SHIP IS COMING APART</p>
+          <h1 id="overlay-title">RUN<span>.</span><br>OR BECOME<br><em>SPACE DUST.</em></h1>
+          <p class="overlay-copy" id="overlay-copy">The reactor is gone. The crew is hostile. You know what to do.</p>
+          <button class="primary-button" id="start-button" type="button"><span id="start-label">BEGIN YOUR ESCAPE</span><span class="button-arrow">↗</span></button>
+          <div class="control-hint" id="control-hint"><kbd>←</kbd> / <kbd>→</kbd> RUN <span>·</span> <kbd>↑</kbd> JUMP <span>·</span> <kbd>↓</kbd> CROUCH / DROP <span>·</span> <kbd>SPACE</kbd> FIRE <span>·</span> <kbd>Z</kbd> SWITCH WEAPON <span>·</span> <kbd>CTRL</kbd> PAUSE</div>
+        </div>
+        <div class="overlay-bottom"><span>FLIGHT RECORDER <b>ONLINE</b></span><span>SECTOR 07 <b>DECK 04</b></span></div>
+      </div>
+
+      <div class="mobile-controls" id="mobile-controls" aria-label="Touch controls">
+        <div class="direction-controls" aria-label="Movement">
+          <button class="touch-button up-control" data-action="up" type="button" aria-label="Jump"><span>↑</span></button>
+          <button class="touch-button left-control" data-action="left" type="button" aria-label="Move left"><span>←</span></button>
+          <button class="touch-button down-control" data-action="down" type="button" aria-label="Crouch or drop through platform"><span>↓</span></button>
+          <button class="touch-button right-control" data-action="right" type="button" aria-label="Move right"><span>→</span></button>
+        </div>
+        <div class="touch-group">
+          <button class="touch-button pause-control" data-action="pause" type="button" aria-label="Pause or resume game"><span>Ⅱ</span><small>PAUSE</small></button>
+          <button class="touch-button fire-control" data-action="fire" type="button" aria-label="Fire plasma"><span>✳</span><small>FIRE</small></button>
+          <button class="touch-button weapon-control" data-action="weapon" type="button" aria-label="Switch weapon"><span>↻</span><small>MODE</small></button>
+        </div>
+      </div>
+    </section>
+
+    <footer class="footer">
+      <span><b>01</b> — NO WAY BACK</span>
+      <span>AN ENDLESS ESCAPE THROUGH THE <b>VOID</b></span>
+      <span>BUILT FOR THE <b>FEARLESS</b> <span class="footer-spark">✳</span></span>
+    </footer>
+  </main>
+  <script src="game.js"></script>
+</body>
+</html>

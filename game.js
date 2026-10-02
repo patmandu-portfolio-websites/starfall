@@ -96,6 +96,7 @@ class Player {
     this.autoAimCooldown = 0;
     this.autoAimActive = false;
     this.jumpBuffer = 0;
+    this.jumpsUsed = 0;
   }
 
   get floor() { return this.game.height * 0.78; }
@@ -178,13 +179,21 @@ class Player {
       this.grounded = this.y + this.height >= this.floor;
       this.jumpBuffer = 0;
     } else {
-      if (this.jumpBuffer > 0 && this.grounded) {
+      if (this.jumpBuffer > 0 && (this.grounded || this.jumpsUsed < 2)) {
+        const isDoubleJump = !this.grounded;
         this.setCrouching(false);
         this.velocityY = -740;
         this.grounded = false;
+        this.jumpsUsed++;
         this.jumpBuffer = 0;
         this.game.audio.play("jump");
-        this.game.addBurst(this.x + 22, this.y + this.height, "#d4ff48", 7, 115);
+        this.game.addBurst(
+          this.x + 22,
+          this.y + this.height,
+          isDoubleJump ? "#73eaff" : "#d4ff48",
+          isDoubleJump ? 11 : 7,
+          isDoubleJump ? 145 : 115
+        );
       }
       const previousBottom = this.y + this.height;
       this.velocityY += 1550 * dt;
@@ -229,6 +238,7 @@ class Player {
         this.y = landingSurface - this.height;
         this.velocityY = 0;
         this.grounded = true;
+        this.jumpsUsed = 0;
       } else {
         this.grounded = false;
       }
@@ -1360,6 +1370,7 @@ class Game {
     this.player.autoAimActive = false;
     this.player.y = this.player.floor - this.player.height;
     this.player.jumpBuffer = 0;
+    this.player.jumpsUsed = 0;
     this.setWeapon("single");
     this.updateHealth();
     this.updateHUD();

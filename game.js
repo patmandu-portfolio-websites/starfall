@@ -84,7 +84,7 @@ class Player {
     this.velocityY = 0;
     this.grounded = true;
     this.health = 3;
-    this.maxHealth = 3;
+    this.maxHealth = 4;
     this.invulnerable = 0;
     this.shieldTimer = 0;
     this.dashActive = false;
@@ -182,7 +182,7 @@ class Player {
       if (this.jumpBuffer > 0 && (this.grounded || this.jumpsUsed < 2)) {
         const isDoubleJump = !this.grounded;
         this.setCrouching(false);
-        this.velocityY = -740;
+        this.velocityY = -700;
         this.grounded = false;
         this.jumpsUsed++;
         this.jumpBuffer = 0;
@@ -420,7 +420,9 @@ class Player {
       ctx.fill();
       ctx.restore();
     }
-    if (this.shieldTimer > 0) {
+    const shieldWarningBlink = this.shieldTimer <= 2 &&
+      Math.floor((2 - this.shieldTimer) * 8) % 2 === 0;
+    if (this.shieldTimer > 0 && !shieldWarningBlink) {
       ctx.save();
       ctx.globalAlpha = 0.45 + Math.sin(this.game.elapsed * 10) * 0.12;
       ctx.strokeStyle = "#73eaff";
@@ -576,7 +578,7 @@ class Pickup {
     if (this.type === "health" || this.type === "double-health") {
       const restored = this.type === "double-health" ? 2 : 1;
       const player = this.game.player;
-      player.maxHealth = Math.min(10, player.maxHealth + restored);
+      player.maxHealth = Math.min(this.game.healthCap, player.maxHealth + restored);
       player.health = Math.min(player.maxHealth, player.health + restored);
       this.game.updateHealth();
       this.game.showPickupMessage(
@@ -870,7 +872,7 @@ class Enemy {
     this.phase = Math.random() * Math.PI * 2;
     this.speed = game.speed * (type === "charger" ? 1.08 : 0.82);
     this.dead = false;
-    this.fireTimer = 1.2 + Math.random() * 1.1;
+    this.fireTimer = (1.2 + Math.random() * 1.1) * game.enemyFireRateMultiplier;
     this.weapon = null;
     this.spreadWeaponDecidedTier = 0;
     this.unlockWeapon();
@@ -879,6 +881,9 @@ class Enemy {
     } else if (type === "sentry") {
       this.width = 43; this.height = 60; this.hp = 3; this.score = 220;
       this.y = this.baseY - this.height;
+    } else if (type === "ship") {
+      this.width = 70; this.height = 38; this.hp = 4; this.score = 320;
+      this.y = game.height * 0.42;
     } else {
       this.width = 54; this.height = 53; this.hp = 3; this.score = 250;
     }
@@ -886,7 +891,7 @@ class Enemy {
   }
 
   unlockWeapon() {
-    if (this.type === "sentry") {
+    if (this.type === "sentry" || this.type === "ship") {
       if (this.weapon !== "aimed-bolt" && this.game.canEnemyUseTrackingWeapon(this)) {
         this.weapon = "aimed-bolt";
       }
@@ -903,7 +908,7 @@ class Enemy {
       ).length >= tier) return;
       if (Math.random() < 0.5) {
         this.weapon = "scatter";
-        this.fireTimer = Math.min(this.fireTimer, 0.9);
+        this.fireTimer = Math.min(this.fireTimer, 0.9 * this.game.enemyFireRateMultiplier);
       }
       return;
     }
@@ -912,7 +917,7 @@ class Enemy {
     if (!weapon || !this.game.enemyWeaponUnlocks.has(weapon) || this.weapon === weapon) return;
     if (!this.game.canEnemyUseTrackingWeapon(this)) return;
     this.weapon = weapon;
-    this.fireTimer = Math.min(this.fireTimer, 0.9);
+    this.fireTimer = Math.min(this.fireTimer, 0.9 * this.game.enemyFireRateMultiplier);
   }
 
   update(dt) {
@@ -933,11 +938,14 @@ class Enemy {
       this.travelX -= this.speed * dt;
       this.x = this.travelX + Math.sin(this.game.elapsed * 2.3 + this.phase) * 38;
       this.y = this.baseY - this.height - 7 + Math.sin(this.game.elapsed * 2.3 + this.phase) * 25;
+    } else if (this.type === "ship") {
+      this.x -= this.speed * dt * 0.9;
+      this.y = this.game.height * 0.34 + Math.sin(this.game.elapsed * 2.1 + this.phase) * this.game.height * 0.16;
     } else {
       this.x -= this.speed * dt;
     }
     this.fireTimer -= dt;
-    if (this.fireTimer <= 0 && this.x < this.game.width - 25 &&
+    if (this.weapon && this.fireTimer <= 0 && this.x < this.game.width - 25 &&
         this.x > this.game.player.x + 105) this.fireWeapon();
     if (this.x < -this.width - 20) this.dead = true;
     if (!this.platform && this.game.isCaveHoleOverlapping(this.x + this.width / 2) &&
@@ -962,15 +970,16 @@ class Enemy {
       ? player.y + player.height * 0.48
       : this.game.player.floor - this.game.height * 0.025;
     const aim = canAim ? Math.atan2(targetY - originY, targetX - originX) : Math.PI;
+    const fireRateMultiplier = this.game.enemyFireRateMultiplier;
     if (this.weapon === "scatter") {
-      this.fireTimer = 2.65;
+      this.fireTimer = 2.65 * fireRateMultiplier;
       for (const offset of [-0.24, 0, 0.24]) {
         this.game.enemyProjectiles.push(new EnemyProjectile(
           this.game, originX, originY, "scatter", aim + offset
         ));
       }
     } else if (this.weapon === "arc-mine") {
-      this.fireTimer = 3.3;
+      this.fireTimer = 3.3 * fireRateMultiplier;
       const flightTime = Math.min(1.5, Math.max(0.65, Math.abs(originX - targetX) / 285));
       const horizontalVelocity = (targetX - originX) / flightTime;
       const gravity = 560;
@@ -979,7 +988,7 @@ class Enemy {
         this.game, originX, originY, "arc-mine", 0, horizontalVelocity, verticalVelocity
       ));
     } else {
-      this.fireTimer = 2.15;
+      this.fireTimer = 2.15 * fireRateMultiplier;
       this.game.enemyProjectiles.push(new EnemyProjectile(this.game, originX, originY, "aimed-bolt", aim));
     }
     this.game.addBurst(originX, originY, this.weapon === "arc-mine" ? "#ffad58" : "#ff644f", 4, 65);
@@ -1000,7 +1009,9 @@ class Enemy {
   draw(ctx) {
     const x = this.x, y = this.y;
     ctx.save();
-    if (this.game.distance >= 1000) {
+    if (this.type === "ship") {
+      this.drawFlyingShip(ctx, x, y);
+    } else if (this.game.distance >= 1000) {
       this.drawAlienEnemy(ctx, x, y);
     } else if (this.type === "charger") {
       ctx.shadowColor = "#ff765e"; ctx.shadowBlur = 9;
@@ -1049,11 +1060,50 @@ class Enemy {
       ctx.fillStyle = "#373244";
       ctx.beginPath(); ctx.arc(29, 43, 3, 0, Math.PI * 2); ctx.fill();
     }
-    if (this.hp < (this.type === "charger" ? 2 : 3)) {
+    const maxHp = this.type === "ship" ? 4 : this.type === "charger" ? 2 : 3;
+    if (this.hp < maxHp) {
       ctx.fillStyle = "#1c2029"; ctx.fillRect(x + 8, y - 9, this.width - 16, 3);
-      ctx.fillStyle = "#d4ff48"; ctx.fillRect(x + 8, y - 9, (this.width - 16) * this.hp / (this.type === "charger" ? 2 : 3), 3);
+      ctx.fillStyle = "#d4ff48"; ctx.fillRect(x + 8, y - 9, (this.width - 16) * this.hp / maxHp, 3);
     }
     ctx.restore();
+  }
+
+  drawFlyingShip(ctx, x, y) {
+    ctx.shadowColor = "#54dff0";
+    ctx.shadowBlur = 14;
+    ctx.fillStyle = "#344d59";
+    ctx.beginPath();
+    ctx.moveTo(x + 2, y + 19);
+    ctx.lineTo(x + 19, y + 8);
+    ctx.lineTo(x + 49, y + 6);
+    ctx.lineTo(x + 68, y + 18);
+    ctx.lineTo(x + 51, y + 30);
+    ctx.lineTo(x + 19, y + 28);
+    ctx.closePath();
+    ctx.fill();
+    ctx.fillStyle = "#91f1ed";
+    ctx.beginPath();
+    ctx.moveTo(x + 24, y + 9);
+    ctx.lineTo(x + 44, y + 9);
+    ctx.lineTo(x + 53, y + 17);
+    ctx.lineTo(x + 28, y + 17);
+    ctx.closePath();
+    ctx.fill();
+    ctx.fillStyle = "#ff735f";
+    ctx.fillRect(x + 3, y + 17, 6, 4);
+    ctx.fillRect(x + 61, y + 17, 7, 4);
+    ctx.shadowColor = "#63eaff";
+    ctx.shadowBlur = 12;
+    ctx.fillStyle = "#63eaff";
+    ctx.beginPath();
+    ctx.moveTo(x + 8, y + 21);
+    ctx.lineTo(x - 5 - Math.random() * 7, y + 19);
+    ctx.lineTo(x + 8, y + 17);
+    ctx.closePath();
+    ctx.fill();
+    ctx.shadowBlur = 0;
+    ctx.fillStyle = "#27313c";
+    ctx.fillRect(x + 25, y + 23, 22, 3);
   }
 
   drawAlienEnemy(ctx, x, y) {
@@ -1264,8 +1314,11 @@ class Game {
     this.nextJetpackDrop = 2000;
     this.nextDashDrop = 3000;
     this.healthUpgradeApplied = false;
+    this.healthUpgrade2000Applied = false;
+    this.healthUpgrade3000Applied = false;
     this.alienWorldAnnounced = false;
     this.caveWorldAnnounced = false;
+    this.cityWorldAnnounced = false;
     this.pickupMessageTimer = 0;
     this.enemyWeaponUnlocks = new Set();
     this.nextEnemyWeaponUnlock = 500;
@@ -1347,8 +1400,11 @@ class Game {
     this.nextJetpackDrop = 2000;
     this.nextDashDrop = 3000;
     this.healthUpgradeApplied = false;
+    this.healthUpgrade2000Applied = false;
+    this.healthUpgrade3000Applied = false;
     this.alienWorldAnnounced = false;
     this.caveWorldAnnounced = false;
+    this.cityWorldAnnounced = false;
     this.pickupMessageTimer = 0;
     this.enemyWeaponUnlocks.clear();
     this.nextEnemyWeaponUnlock = 500;
@@ -1356,7 +1412,7 @@ class Game {
     this.weaponAmmo = { spread: 0, "rapid-spread": 0, grenade: 0 };
     this.weapon = "single";
     this.player.health = 3;
-    this.player.maxHealth = 3;
+    this.player.maxHealth = 4;
     this.player.setCrouching(false);
     this.player.velocityY = 0;
     this.player.grounded = true;
@@ -1489,7 +1545,7 @@ class Game {
   }
 
   getCaveHoleUnder(x) {
-    if (this.distance < 3000) return null;
+    if (this.distance < 3000 || this.distance >= 4000) return null;
     return this.caveHazards.find((hazard) =>
       !hazard.dead && hazard.type === "hole" && x >= hazard.x && x <= hazard.x + hazard.width
     ) || null;
@@ -1567,13 +1623,13 @@ class Game {
     this.score += dt * 5;
     this.processMilestones();
     this.processEnemyWeaponUnlocks();
-    if (this.distance >= 3000) {
+    if (this.distance >= 3000 && this.distance < 4000) {
       this.caveHazardTimer -= dt;
       if (this.caveHazardTimer <= 0) this.spawnCaveHazard();
     }
     for (const hazard of this.caveHazards) hazard.update(dt);
     this.player.update(dt);
-    if (this.distance >= 3000) {
+    if (this.distance >= 3000 && this.distance < 4000) {
       for (const hazard of this.caveHazards) hazard.checkPlayerCollision(this.player);
     }
     for (const platform of this.platforms) platform.update(dt);
@@ -1611,6 +1667,10 @@ class Game {
   }
 
   processMilestones() {
+    if (!this.cityWorldAnnounced && this.distance >= 4000) {
+      this.cityWorldAnnounced = true;
+      this.showPickupMessage("4000M · UNDERGROUND CITY · FLYING SHIPS INBOUND");
+    }
     if (!this.caveWorldAnnounced && this.distance >= 3000) {
       this.caveWorldAnnounced = true;
       this.showPickupMessage("3000M · ALIEN CAVE · WATCH FOR FALLING STALACTITES");
@@ -1621,10 +1681,25 @@ class Game {
     }
     if (!this.healthUpgradeApplied && this.distance >= 500) {
       this.healthUpgradeApplied = true;
-      this.player.maxHealth = 5;
-      this.player.health = Math.min(this.player.maxHealth, this.player.health + 2);
+      this.player.health = Math.min(this.player.maxHealth, this.player.health + 1);
       this.updateHealth();
-      this.showPickupMessage("500M HULL UPGRADE · MAX INTEGRITY +2");
+      this.showPickupMessage("500M HULL REPAIR · INTEGRITY +1");
+    }
+    if (!this.healthUpgrade2000Applied && this.distance >= 2000) {
+      this.healthUpgrade2000Applied = true;
+      const addedCapacity = this.healthCap - this.player.maxHealth;
+      this.player.maxHealth = this.healthCap;
+      this.player.health = Math.min(this.player.maxHealth, this.player.health + addedCapacity);
+      this.updateHealth();
+      this.showPickupMessage("2000M HULL UPGRADE · MAX INTEGRITY 7");
+    }
+    if (!this.healthUpgrade3000Applied && this.distance >= 3000) {
+      this.healthUpgrade3000Applied = true;
+      const addedCapacity = this.healthCap - this.player.maxHealth;
+      this.player.maxHealth = this.healthCap;
+      this.player.health = Math.min(this.player.maxHealth, this.player.health + addedCapacity);
+      this.updateHealth();
+      this.showPickupMessage("3000M HULL UPGRADE · MAX INTEGRITY 10");
     }
     while (this.distance >= this.nextWeaponDrop) {
       const milestone = this.nextWeaponDrop;
@@ -1687,12 +1762,20 @@ class Game {
     }
   }
 
+  get healthCap() {
+    if (this.distance >= 3000) return 10;
+    if (this.distance >= 2000) return 7;
+    return 4;
+  }
+
   get enemyScreenLimit() {
     if (this.distance < 1000) {
-      return this.distance <= 150 ? 1 : Math.ceil(this.distance / 150);
+      if (this.distance <= 150) return 2;
+      return Math.ceil(this.distance / 150) + 1 + Number(this.distance >= 500);
     }
     if (this.distance >= 2000) {
-      return 5 + Math.floor((this.distance - 2000) / 1000);
+      const cap = this.distance >= 4000 ? 10 : 9;
+      return Math.min(cap, 7 + Math.floor((this.distance - 2000) / 250));
     }
     const alienStartLimit = Math.floor(Math.ceil(1000 / 150) / 2);
     return alienStartLimit + Math.floor((this.distance - 1000) / 150);
@@ -1700,6 +1783,12 @@ class Game {
 
   canSpawnEnemy() {
     return this.enemies.filter((enemy) => !enemy.dead).length < this.enemyScreenLimit;
+  }
+
+  get enemyFireRateMultiplier() {
+    if (this.distance >= 2000) return 0.55;
+    if (this.distance >= 1000) return 0.75;
+    return 0.85;
   }
 
   isEnemyTrackingWeapon(weapon) {
@@ -1721,11 +1810,14 @@ class Game {
     if (!this.canSpawnEnemy()) return;
     const roll = Math.random();
     let type;
-    if (this.distance < 90) type = roll < .68 ? "charger" : "sentry";
+    if (this.distance >= 4000 && roll < .38) type = "ship";
+    else if (this.distance < 90) type = roll < .68 ? "charger" : "sentry";
     else if (roll < .47) type = "charger";
     else if (roll < .76) type = "sentry";
     else type = "drifter";
-    const x = type === "sentry" ? this.width + 20 + Math.random() * 90 : this.width + 25;
+    const x = type === "sentry" || type === "ship"
+      ? this.width + 20 + Math.random() * 90
+      : this.width + 25;
     this.enemies.push(new Enemy(this, type, x));
   }
 
@@ -1748,16 +1840,16 @@ class Game {
       : Math.max(0.12, 0.45 - (this.distance - 200) * 0.0007);
     const pickupTypes = this.distance >= 3000
       ? ["health", "double-health", "spread", "rapid-spread", "grenade", "auto-aim",
-        "shield", "shield", "shield", "dash", "jetpack"]
+        "shield", "shield", "dash", "jetpack"]
       : this.distance >= 2000
       ? ["health", "double-health", "spread", "rapid-spread", "grenade", "auto-aim",
-        "shield", "shield", "shield", "jetpack"]
+        "shield", "jetpack"]
       : this.distance >= 1000
       ? ["health", "double-health", "spread", "rapid-spread", "grenade", "auto-aim",
-        "shield", "shield", "shield"]
+        "shield"]
       : this.distance >= 600
       ? ["health", "double-health", "spread", "rapid-spread", "grenade", "auto-aim",
-        "auto-aim", "shield", "shield"]
+        "auto-aim"]
       : this.distance >= 500
         ? ["health", "double-health", "spread", "rapid-spread", "grenade"]
       : ["health", "spread", "grenade"];
@@ -1809,8 +1901,13 @@ class Game {
     const ctx = this.ctx, w = this.width, h = this.height, floor = h * .78;
     const gradient = ctx.createLinearGradient(0, 0, 0, h);
     const alienBiome = this.distance >= 1000;
-    const caveBiome = this.distance >= 3000;
-    if (caveBiome) {
+    const cityBiome = this.distance >= 4000;
+    const caveBiome = this.distance >= 3000 && !cityBiome;
+    if (cityBiome) {
+      gradient.addColorStop(0, "#07111c");
+      gradient.addColorStop(.56, "#142b37");
+      gradient.addColorStop(1, "#0b1722");
+    } else if (caveBiome) {
       gradient.addColorStop(0, "#080b13");
       gradient.addColorStop(.55, "#161923");
       gradient.addColorStop(1, "#0c1017");
@@ -1824,13 +1921,13 @@ class Game {
       gradient.addColorStop(1, "#111723");
     }
     ctx.fillStyle = gradient; ctx.fillRect(0, 0, w, h);
-    if (!caveBiome) {
+    if (!caveBiome && !cityBiome) {
       const nebula = ctx.createRadialGradient(w * .73, h * .33, 2, w * .73, h * .33, w * .58);
       nebula.addColorStop(0, alienBiome ? "#80ad5740" : "#30293c55");
       nebula.addColorStop(1, alienBiome ? "#80ad5700" : "#30293c00");
       ctx.fillStyle = nebula; ctx.fillRect(0, 0, w, floor);
     }
-    if (!caveBiome) {
+    if (!caveBiome && !cityBiome) {
       for (const star of this.stars) {
         star.x -= (this.state === "running" ? this.speed : 14) * star.depth * dt * .18;
         if (star.x < 0) { star.x = w; star.y = Math.random() * floor; }
@@ -1857,6 +1954,10 @@ class Game {
 
   drawShipInterior(floor) {
     const ctx = this.ctx, w = this.width, h = this.height;
+    if (this.distance >= 4000) {
+      this.drawUndergroundCity(floor);
+      return;
+    }
     if (this.distance >= 3000) {
       this.drawAlienCave(floor);
       return;
@@ -1865,6 +1966,77 @@ class Game {
       this.drawAlienLandscape(floor);
       return;
     }
+    const wallHeight = floor - 17;
+    const wallGradient = ctx.createLinearGradient(0, 0, 0, wallHeight);
+    wallGradient.addColorStop(0, "#303b4b");
+    wallGradient.addColorStop(.52, "#202a38");
+    wallGradient.addColorStop(1, "#141c28");
+    ctx.fillStyle = wallGradient;
+    ctx.fillRect(0, 0, w, wallHeight);
+
+    const wallScroll = (this.elapsed * this.speed * .12) % 190;
+    for (let x = -wallScroll; x < w + 190; x += 190) {
+      ctx.fillStyle = "#3c4858";
+      ctx.fillRect(x, 0, 3, wallHeight);
+      ctx.fillStyle = "#273342";
+      ctx.fillRect(x + 5, 0, 2, wallHeight);
+      ctx.fillStyle = "#111925";
+      ctx.fillRect(x + 15, h * .055, 155, 2);
+      ctx.fillRect(x + 15, h * .57, 155, 2);
+      ctx.fillStyle = "#465365";
+      ctx.fillRect(x + 19, h * .055 + 3, 145, 2);
+      ctx.fillRect(x + 19, h * .57 + 3, 145, 2);
+      ctx.fillStyle = "#8290a0";
+      for (const boltY of [h * .055 + 7, h * .57 + 7]) {
+        ctx.fillRect(x + 14, boltY, 3, 3);
+        ctx.fillRect(x + 170, boltY, 3, 3);
+      }
+    }
+
+    const windowHeight = Math.min(h * .28, wallHeight * .43);
+    const windowY = h * .18;
+    const windowWidth = Math.min(w * .27, 205);
+    const windowGap = Math.max(20, w * .045);
+    const windowStart = w * .08;
+    for (let windowX = windowStart; windowX < w - 20; windowX += windowWidth + windowGap) {
+      const paneX = Math.min(windowX, w - windowWidth - 12);
+      ctx.fillStyle = "#080e18";
+      ctx.fillRect(paneX - 7, windowY - 7, windowWidth + 14, windowHeight + 14);
+      ctx.fillStyle = "#637384";
+      ctx.fillRect(paneX - 5, windowY - 5, windowWidth + 10, 3);
+      ctx.fillRect(paneX - 5, windowY + windowHeight + 2, windowWidth + 10, 3);
+      ctx.fillRect(paneX - 5, windowY - 2, 3, windowHeight + 4);
+      ctx.fillRect(paneX + windowWidth + 2, windowY - 2, 3, windowHeight + 4);
+      const view = ctx.createLinearGradient(0, windowY, 0, windowY + windowHeight);
+      view.addColorStop(0, "#06101f");
+      view.addColorStop(.65, "#10243c");
+      view.addColorStop(1, "#1c3043");
+      ctx.fillStyle = view;
+      ctx.fillRect(paneX, windowY, windowWidth, windowHeight);
+      ctx.save();
+      ctx.beginPath();
+      ctx.rect(paneX, windowY, windowWidth, windowHeight);
+      ctx.clip();
+      for (const star of this.stars) {
+        if (star.x < paneX || star.x > paneX + windowWidth ||
+            star.y < windowY || star.y > windowY + windowHeight) continue;
+        ctx.globalAlpha = .55 + star.depth * .45;
+        ctx.fillStyle = star.depth > .52 ? "#f0f5ff" : "#a8c4e4";
+        ctx.fillRect(star.x, star.y, star.size + .4, star.size + .4);
+      }
+      ctx.globalAlpha = 1;
+      ctx.restore();
+      ctx.fillStyle = "#8290a0";
+      ctx.fillRect(paneX + windowWidth * .5 - 1, windowY, 2, windowHeight);
+      ctx.fillStyle = "#b2c2d2";
+      ctx.fillRect(paneX + 8, windowY + 7, Math.max(0, windowWidth * .32), 2);
+    }
+
+    ctx.fillStyle = "#101722";
+    ctx.fillRect(0, wallHeight - 3, w, 7);
+    ctx.fillStyle = "#526174";
+    ctx.fillRect(0, wallHeight - 2, w, 2);
+
     ctx.fillStyle = "#151a24";
     ctx.fillRect(0, floor - 11, w, 16);
     ctx.fillStyle = "#3c4555";
@@ -1960,6 +2132,7 @@ class Game {
       const depth = 18 + Math.sin((x + scroll) * .027) * 13 + Math.sin((x - scroll) * .061) * 7;
       ctx.lineTo(x, depth);
     }
+
     ctx.closePath();
     ctx.fill();
     ctx.fillStyle = "#20232a";
@@ -1982,6 +2155,76 @@ class Game {
       const glowY = 45 + ((x * 17) % Math.max(60, Math.floor(floor - 95)));
       ctx.fillRect(x, glowY, 2, 10);
       ctx.fillRect(x - 3, glowY + 9, 8, 2);
+    }
+  }
+
+  drawUndergroundCity(floor) {
+    const ctx = this.ctx, w = this.width, h = this.height;
+    const scroll = this.elapsed * this.speed * .32;
+    const skyline = floor - Math.min(88, h * .2);
+    const glow = ctx.createLinearGradient(0, skyline - 65, 0, floor);
+    glow.addColorStop(0, "#142c3b00");
+    glow.addColorStop(1, "#48b8be28");
+    ctx.fillStyle = glow;
+    ctx.fillRect(0, skyline - 65, w, floor - skyline + 65);
+
+    for (let layer = 0; layer < 2; layer++) {
+      const width = 95 + layer * 48;
+      const offset = (scroll * (layer === 0 ? .16 : .31)) % width;
+      const buildingColors = layer === 0
+        ? ["#0a1720", "#0b1821", "#0c1922", "#0d1a23"]
+        : ["#10212a", "#11222b", "#12232c", "#13242d"];
+      const trimColors = layer === 0
+        ? ["#172c35", "#182d36", "#192e37", "#1a2f38"]
+        : ["#203a42", "#213b43", "#223c44", "#233d45"];
+      for (let x = -width - offset; x < w + width; x += width) {
+        const buildingIndex = Math.floor((x + offset) / width);
+        const heightSeed = Math.sin((buildingIndex + layer * 23) * 127.1) * 43758.5453;
+        const heightVariation = heightSeed - Math.floor(heightSeed);
+        const shadeSeed = Math.sin((buildingIndex + layer * 37) * 91.7) * 24634.6345;
+        const shadeIndex = Math.floor((shadeSeed - Math.floor(shadeSeed)) * buildingColors.length);
+        const buildingHeight = h * (.2 + heightVariation * .38);
+        const top = skyline - buildingHeight;
+        ctx.fillStyle = buildingColors[shadeIndex];
+        ctx.fillRect(x, top, width - 5, buildingHeight);
+        ctx.fillStyle = trimColors[shadeIndex];
+        ctx.fillRect(x + 5, top + 7, width - 15, 3);
+        ctx.fillStyle = "#48aaa5";
+        ctx.globalAlpha = .48 + Math.sin(this.elapsed * 2 + x * .03) * .18;
+        for (let windowY = top + 21; windowY < skyline - 12; windowY += 19) {
+          for (let windowX = x + 11; windowX < x + width - 15; windowX += 19) {
+            if (Math.floor(windowX + windowY + layer) % 3 !== 0) {
+              ctx.fillRect(windowX, windowY, 5, 8);
+            }
+          }
+        }
+        ctx.globalAlpha = 1;
+      }
+    }
+
+    ctx.fillStyle = "#1b3038";
+    ctx.fillRect(0, floor - 13, w, 15);
+    ctx.fillStyle = "#56c7c2";
+    ctx.fillRect(0, floor - 13, w, 3);
+    ctx.fillStyle = "#14252e";
+    ctx.fillRect(0, floor + 2, w, h - floor - 2);
+    const laneOffset = scroll % 130;
+    for (let x = -laneOffset; x < w + 130; x += 130) {
+      ctx.fillStyle = "#28616a";
+      ctx.fillRect(x, floor + 16, 52, 3);
+      ctx.fillStyle = "#1a414d";
+      ctx.fillRect(x + 5, floor + 28, 20, Math.max(0, h - floor - 28));
+    }
+
+    ctx.strokeStyle = "#4fc6c866";
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.moveTo(0, skyline + 9);
+    ctx.lineTo(w, skyline + 9);
+    ctx.stroke();
+    for (let x = -((scroll * .72) % 85); x < w + 85; x += 85) {
+      ctx.fillStyle = "#76efe0";
+      ctx.fillRect(x, skyline + 6, 12, 4);
     }
   }
 

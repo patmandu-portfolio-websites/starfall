@@ -1244,24 +1244,28 @@ class Game {
         : milestone === 100 || ((milestone - 200) / 200) % 2 === 1
           ? "spread"
           : "grenade";
-      this.pickups.push(new Pickup(this, weapon, this.player.x + 150, milestone));
+      this.pickups.push(new Pickup(this, weapon, this.randomPickupX(19), milestone));
       this.nextWeaponDrop += milestone < 200 ? 100 : 200;
     }
     while (this.distance >= this.nextAutoAimDrop) {
       const milestone = this.nextAutoAimDrop;
-      this.pickups.push(new Pickup(this, "auto-aim", this.player.x + 225, milestone));
+      this.pickups.push(new Pickup(this, "auto-aim", this.randomPickupX(19), milestone));
       this.nextAutoAimDrop += 250;
     }
     while (this.distance >= this.nextDoubleHealthDrop) {
       const milestone = this.nextDoubleHealthDrop;
-      this.pickups.push(new Pickup(this, "double-health", this.player.x + 300, milestone));
+      this.pickups.push(new Pickup(this, "double-health", this.randomPickupX(17), milestone));
       this.nextDoubleHealthDrop += 200;
     }
     while (this.distance >= this.nextHealthDrop) {
       const milestone = this.nextHealthDrop;
-      this.pickups.push(new Pickup(this, "health", this.player.x + 265, milestone));
+      this.pickups.push(new Pickup(this, "health", this.randomPickupX(17), milestone));
       this.nextHealthDrop += milestone < 200 ? 200 : 100;
     }
+  }
+
+  randomPickupX(size) {
+    return Math.random() * Math.max(0, this.width - size);
   }
 
   processEnemyWeaponUnlocks() {
@@ -1359,7 +1363,9 @@ class Game {
     const platform = new Platform(this, x, width, elevation, pickupType);
     this.platforms.push(platform);
     if (pickupType) {
-      this.pickups.push(new Pickup(this, pickupType, platform.x + width * 0.34, null, platform));
+      const pickupSize = pickupType === "health" || pickupType === "double-health" ? 17 : 19;
+      const pickupX = platform.x + Math.random() * Math.max(0, width - pickupSize);
+      this.pickups.push(new Pickup(this, pickupType, pickupX, null, platform));
     }
     if (this.canSpawnEnemy()) {
       const enemyType = Math.random() < 0.58 ? "charger" : "sentry";

@@ -420,10 +420,11 @@ h1 em { color: var(--coral); font-style: normal; }
     padding: 0 15px 22px;
   }
   .direction-controls {
-    grid-template-columns: repeat(3, 42px);
-    grid-template-rows: repeat(2, 42px);
+    grid-template-columns: repeat(3, 48px);
+    grid-template-rows: repeat(2, 48px);
     gap: 8px;
   }
+  .direction-controls .touch-button { width: 48px; height: 48px; }
   .touch-button small { font-size: 7px; }
   .pause-control {
     position: absolute;

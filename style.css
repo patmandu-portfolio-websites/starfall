@@ -222,7 +222,6 @@ h1 em { color: var(--coral); font-style: normal; }
   .health-pips i { width: 17px; }
   .health-pips { max-width: 160px; }
   .weapon-readout { margin-top: 9px; font-size: 7px; }
-  .pause-button { top: 13px; width: 26px; height: 26px; }
   .reset-button { display: none; }
   .pickup-toast { top: 94px; max-width: calc(100% - 36px); overflow: hidden; font-size: 8px; text-overflow: ellipsis; }
   .overlay { justify-content: flex-start; padding: 24% 7% 95px; background: linear-gradient(90deg, #080b14ed 0%, #080b14c9 66%, #080b1477); }
@@ -413,4 +412,25 @@ h1 em { color: var(--coral); font-style: normal; }
   .weapon-control { border-color: #d4ff4877; color: var(--lime); }
   .fire-control { border-color: #ff644f99; color: #ff806f; }
   .fire-control span { font-size: 20px; }
+}
+@media (max-width: 1000px) {
+  .pause-button { display: none; }
+  .mobile-controls {
+    inset: 0;
+    padding: 0 15px 22px;
+  }
+  .direction-controls {
+    grid-template-columns: repeat(3, 42px);
+    grid-template-rows: repeat(2, 42px);
+    gap: 8px;
+  }
+  .touch-button small { font-size: 7px; }
+  .pause-control {
+    position: absolute;
+    top: 15px;
+    left: 15px;
+  }
+  .fire-control, .weapon-control { width: 56px; height: 56px; }
+  .fire-control span { font-size: 23px; }
+  .touch-group { gap: 20px; }
 }
